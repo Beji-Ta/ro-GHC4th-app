@@ -374,6 +374,12 @@
   function normalizeSteps(){
     state.steps.forEach(step => {
       if(!Array.isArray(step.marks)) step.marks = [];
+      step.marks.forEach(m => { if(typeof m.t !== "number") m.t = 0; });
+      step.segments = (step.segments || []).map(seg => {
+        if(Array.isArray(seg)) return { points: seg, t: 0 };
+        if(seg && Array.isArray(seg.points)) return seg;
+        return { points: [], t: 0 };
+      });
     });
   }
 
@@ -439,9 +445,9 @@
       if(!step.visible) return;
       const g = svgEl("g", {});
       step.segments.forEach(seg => {
-        if(seg.length < 2) return;
+        if(seg.points.length < 2) return;
         g.appendChild(svgEl("polyline", {
-          points: pointsAttr(seg),
+          points: pointsAttr(seg.points),
           fill: "none",
           stroke: step.color,
           "stroke-width": 6,
@@ -451,7 +457,7 @@
         }));
       });
       if(step.segments.length){
-        const first = step.segments[0][0];
+        const first = step.segments[0].points[0];
         if(first){
           g.appendChild(svgEl("circle", {cx:first.x, cy:first.y, r:9, fill:step.color, stroke:"#fff", "stroke-width":1.5}));
         }
@@ -609,12 +615,12 @@
 
       const undoBtn = document.createElement("button");
       undoBtn.className = "iconBtn";
-      undoBtn.title = "このステップの最後の線を1本取り消す";
+      undoBtn.title = "このステップの最後の操作（線またはマーク）を取り消す";
       undoBtn.textContent = "↩";
-      undoBtn.disabled = step.segments.length === 0;
+      undoBtn.disabled = step.segments.length === 0 && step.marks.length === 0;
       undoBtn.addEventListener("click", e => {
         e.stopPropagation();
-        undoLastSegmentOfStep(step.id);
+        undoLastActionOfStep(step.id);
       });
 
       const delBtn = document.createElement("button");
@@ -676,7 +682,7 @@
     if(openPolyline.length >= 2 && openPolylineStepId){
       const step = state.steps.find(s => s.id === openPolylineStepId);
       if(step){
-        step.segments.push(openPolyline.slice());
+        step.segments.push({ points: openPolyline.slice(), t: Date.now() });
       }
     }
     openPolyline = [];
@@ -699,13 +705,22 @@
     renderModeBar();
   }
 
-  function undoLastSegmentOfStep(stepId){
+  function undoLastActionOfStep(stepId){
     const step = state.steps.find(s => s.id === stepId);
-    if(!step || step.segments.length === 0){
-      showToast("取り消せる線がありません");
+    if(!step) return;
+    const lastSeg = step.segments[step.segments.length - 1];
+    const lastMark = step.marks[step.marks.length - 1];
+    if(!lastSeg && !lastMark){
+      showToast("取り消せる操作がありません");
       return;
     }
-    step.segments.pop();
+    const segT = lastSeg ? lastSeg.t : -1;
+    const markT = lastMark ? lastMark.t : -1;
+    if(markT > segT){
+      step.marks.pop();
+    } else {
+      step.segments.pop();
+    }
     renderAll();
     persist();
   }
@@ -715,7 +730,7 @@
     if(hitIndex >= 0){
       step.marks.splice(hitIndex, 1);
     } else {
-      step.marks.push(imgPt);
+      step.marks.push({ x: imgPt.x, y: imgPt.y, t: Date.now() });
     }
     renderSvg();
     renderSidebar();
