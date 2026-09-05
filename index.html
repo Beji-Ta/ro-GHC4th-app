@@ -91,6 +91,17 @@
     border:1px solid rgba(255,255,255,0.4);
   }
 
+  .toolSwitch{
+    display:flex; border:1px solid var(--border); border-radius:8px;
+    overflow:hidden; flex:0 0 auto;
+  }
+  .toolBtn{
+    padding:6px 10px; font-size:12px; background:var(--panel2); color:var(--text);
+    border:none; cursor:pointer; white-space:nowrap;
+  }
+  .toolBtn:hover{ background:#2b3040; }
+  .toolBtn.active{ background:var(--accent); color:#fff; }
+
   .colorSwatchBtn{
     width:18px; height:18px; border-radius:50%; flex:0 0 auto;
     border:1px solid rgba(255,255,255,0.4); cursor:pointer; padding:0;
@@ -240,6 +251,10 @@
         対象: <span class="swatch" id="activeSwatch"></span>
         <span id="activeStepName">-</span>
       </span>
+      <div class="toolSwitch" id="toolSwitch">
+        <button type="button" class="toolBtn active" data-tool="line">線</button>
+        <button type="button" class="toolBtn" data-tool="mark">○ マーク</button>
+      </div>
       <button class="btn small" id="straightenBtn" disabled title="描画中の点線を直線に補正します">直線に補正</button>
       <button class="btn small" id="commitLineBtn" disabled>線を確定</button>
       <button class="btn small" id="cancelLineBtn" disabled>取消</button>
@@ -317,7 +332,11 @@
   let currentObjectUrl = null;
   let hasCustomMap = false;
 
+  const MARK_RADIUS = 18;
+  const MARK_STROKE_WIDTH = 5;
+
   let isDrawMode = false;
+  let drawTool = "line"; // "line" | "mark"
   let openPolyline = [];      // in-progress points (image space)
   let openPolylineStepId = null;
 
@@ -347,8 +366,15 @@
       visible: true,
       comment: "",
       color: colorForIndex(state.steps.length),
-      segments: []
+      segments: [],
+      marks: []
     };
+  }
+
+  function normalizeSteps(){
+    state.steps.forEach(step => {
+      if(!Array.isArray(step.marks)) step.marks = [];
+    });
   }
 
   function getActiveStep(){
@@ -430,6 +456,15 @@
           g.appendChild(svgEl("circle", {cx:first.x, cy:first.y, r:9, fill:step.color, stroke:"#fff", "stroke-width":1.5}));
         }
       }
+      (step.marks || []).forEach(m => {
+        g.appendChild(svgEl("circle", {
+          cx: m.x, cy: m.y, r: MARK_RADIUS,
+          fill: "none",
+          stroke: step.color,
+          "stroke-width": MARK_STROKE_WIDTH,
+          opacity: 0.95
+        }));
+      });
       routeSvg.appendChild(g);
     });
 
@@ -465,6 +500,14 @@
     el("straightenBtn").disabled = openPolyline.length < 3;
     el("drawModeToggle").checked = isDrawMode;
     mapArea.classList.toggle("drawMode", isDrawMode);
+
+    const isLineTool = drawTool === "line";
+    el("straightenBtn").style.display = isLineTool ? "" : "none";
+    el("commitLineBtn").style.display = isLineTool ? "" : "none";
+    el("cancelLineBtn").style.display = isLineTool ? "" : "none";
+    document.querySelectorAll("#toolSwitch .toolBtn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.tool === drawTool);
+    });
   }
 
   function renderSidebar(){
@@ -562,7 +605,7 @@
 
       const meta = document.createElement("span");
       meta.className = "stepMeta";
-      meta.textContent = step.segments.length + " 本の線";
+      meta.textContent = step.segments.length + " 本の線 / " + (step.marks || []).length + " 個のマーク";
 
       const undoBtn = document.createElement("button");
       undoBtn.className = "iconBtn";
@@ -667,6 +710,18 @@
     persist();
   }
 
+  function toggleMarkAtPoint(step, imgPt){
+    const hitIndex = step.marks.findIndex(m => Math.hypot(m.x - imgPt.x, m.y - imgPt.y) <= MARK_RADIUS);
+    if(hitIndex >= 0){
+      step.marks.splice(hitIndex, 1);
+    } else {
+      step.marks.push(imgPt);
+    }
+    renderSvg();
+    renderSidebar();
+    persist();
+  }
+
   /* ---------------- Pointer / draw / pan / zoom ---------------- */
   function distance(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
   function midpoint(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
@@ -682,7 +737,15 @@
     activePointers.set(e.pointerId, vp);
 
     if(activePointers.size === 1){
-      if(isDrawMode){
+      if(isDrawMode && drawTool === "mark"){
+        const step = getActiveStep();
+        if(!step){
+          showToast("先にステップを選択してください");
+          return;
+        }
+        const imgPt = clientToImage(e.clientX, e.clientY);
+        toggleMarkAtPoint(step, imgPt);
+      } else if(isDrawMode){
         if(!state.activeStepId){
           showToast("先にステップを選択してください");
           return;
@@ -804,6 +867,17 @@
     renderAll();
   });
   el("straightenBtn").addEventListener("click", straightenOpenPolyline);
+
+  document.querySelectorAll("#toolSwitch .toolBtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if(drawTool === "line"){
+        commitOrDiscardOpenPolyline();
+      }
+      drawTool = btn.dataset.tool;
+      renderAll();
+      persist();
+    });
+  });
 
   el("addStepBtn").addEventListener("click", addStep);
 
@@ -1024,6 +1098,7 @@
     } else if(!state.activeStepId){
       state.activeStepId = state.steps[0].id;
     }
+    normalizeSteps();
   }
 
   async function init(){
