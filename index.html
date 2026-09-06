@@ -615,12 +615,12 @@
 
       const undoBtn = document.createElement("button");
       undoBtn.className = "iconBtn";
-      undoBtn.title = "このステップの最後の操作（線またはマーク）を取り消す";
+      undoBtn.title = "このステップの最後の線を1本取り消す";
       undoBtn.textContent = "↩";
-      undoBtn.disabled = step.segments.length === 0 && step.marks.length === 0;
+      undoBtn.disabled = step.segments.length === 0;
       undoBtn.addEventListener("click", e => {
         e.stopPropagation();
-        undoLastActionOfStep(step.id);
+        undoLastSegmentOfStep(step.id);
       });
 
       const delBtn = document.createElement("button");
@@ -697,22 +697,13 @@
     else discardOpenPolyline();
   }
 
-  function undoLastActionOfStep(stepId){
+  function undoLastSegmentOfStep(stepId){
     const step = state.steps.find(s => s.id === stepId);
-    if(!step) return;
-    const lastSeg = step.segments[step.segments.length - 1];
-    const lastMark = step.marks[step.marks.length - 1];
-    if(!lastSeg && !lastMark){
-      showToast("取り消せる操作がありません");
+    if(!step || step.segments.length === 0){
+      showToast("取り消せる線がありません");
       return;
     }
-    const segT = lastSeg ? lastSeg.t : -1;
-    const markT = lastMark ? lastMark.t : -1;
-    if(markT > segT){
-      step.marks.pop();
-    } else {
-      step.segments.pop();
-    }
+    step.segments.pop();
     renderAll();
     persist();
   }
