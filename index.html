@@ -255,7 +255,6 @@
         <button type="button" class="toolBtn active" data-tool="line">線</button>
         <button type="button" class="toolBtn" data-tool="mark">○ マーク</button>
       </div>
-      <button class="btn small" id="straightenBtn" disabled title="描画中の点線を直線に補正します">直線に補正</button>
       <button class="btn small" id="commitLineBtn" disabled>線を確定</button>
       <button class="btn small" id="cancelLineBtn" disabled>取消</button>
     </div>
@@ -345,6 +344,7 @@
   let pinchState = null;            // {dist, cx, cy}
   let isDrawingStroke = false;
   let strokeMoved = false;
+  let liveDragPoint = null; // uncommitted end point shown while a straight-line drag is in progress
 
   /* ---------------- Utils ---------------- */
   function uid(prefix){
@@ -475,9 +475,10 @@
     });
 
     // open (in-progress) polyline preview
+    const previewPoints = liveDragPoint ? openPolyline.concat([liveDragPoint]) : openPolyline;
     const previewEl = svgEl("polyline", {
       id: "openPreview",
-      points: pointsAttr(openPolyline),
+      points: pointsAttr(previewPoints),
       fill: "none",
       stroke: openPolylineStepId ? (state.steps.find(s=>s.id===openPolylineStepId)||{}).color || "#fff" : "#fff",
       "stroke-width": 6,
@@ -492,7 +493,8 @@
   function updateOpenPreviewOnly(){
     let previewEl = document.getElementById("openPreview");
     if(!previewEl){ renderSvg(); return; }
-    previewEl.setAttribute("points", pointsAttr(openPolyline));
+    const previewPoints = liveDragPoint ? openPolyline.concat([liveDragPoint]) : openPolyline;
+    previewEl.setAttribute("points", pointsAttr(previewPoints));
     const step = state.steps.find(s=>s.id===openPolylineStepId);
     if(step) previewEl.setAttribute("stroke", step.color);
   }
@@ -503,12 +505,10 @@
     el("activeSwatch").style.background = active ? active.color : "#666";
     el("commitLineBtn").disabled = openPolyline.length < 2;
     el("cancelLineBtn").disabled = openPolyline.length === 0;
-    el("straightenBtn").disabled = openPolyline.length < 3;
     el("drawModeToggle").checked = isDrawMode;
     mapArea.classList.toggle("drawMode", isDrawMode);
 
     const isLineTool = drawTool === "line";
-    el("straightenBtn").style.display = isLineTool ? "" : "none";
     el("commitLineBtn").style.display = isLineTool ? "" : "none";
     el("cancelLineBtn").style.display = isLineTool ? "" : "none";
     document.querySelectorAll("#toolSwitch .toolBtn").forEach(btn => {
@@ -696,14 +696,6 @@
     if(openPolyline.length >= 2){ commitOpenPolyline(); persist(); }
     else discardOpenPolyline();
   }
-  function straightenOpenPolyline(){
-    if(openPolyline.length < 2) return;
-    const first = openPolyline[0];
-    const last = openPolyline[openPolyline.length - 1];
-    openPolyline = [first, last];
-    updateOpenPreviewOnly();
-    renderModeBar();
-  }
 
   function undoLastActionOfStep(stepId){
     const step = state.steps.find(s => s.id === stepId);
@@ -795,13 +787,8 @@
     if(activePointers.size === 1){
       if(isDrawMode && isDrawingStroke){
         strokeMoved = true;
-        const imgPt = clientToImage(e.clientX, e.clientY);
-        const last = openPolyline[openPolyline.length - 1];
-        if(!last || distance(last, imgPt) > 3){
-          openPolyline.push(imgPt);
-          updateOpenPreviewOnly();
-          renderModeBar();
-        }
+        liveDragPoint = clientToImage(e.clientX, e.clientY);
+        updateOpenPreviewOnly();
       } else if(panState){
         view.tx = panState.startTx + (vp.x - panState.startX);
         view.ty = panState.startTy + (vp.y - panState.startY);
@@ -825,9 +812,14 @@
 
     if(activePointers.size === 0){
       if(isDrawMode && isDrawingStroke){
-        if(!strokeMoved){
-          // simple click: point already pushed on pointerdown, keep polyline open
+        if(e.type === "pointerup" && strokeMoved && liveDragPoint){
+          // drag finished: commit a straight line from the press point to the release point
+          openPolyline.push(liveDragPoint);
         }
+        // plain click (no movement): the point pushed on pointerdown stays as-is, polyline remains open
+        liveDragPoint = null;
+        updateOpenPreviewOnly();
+        renderModeBar();
         isDrawingStroke = false;
       }
       panState = null;
@@ -881,7 +873,6 @@
     discardOpenPolyline();
     renderAll();
   });
-  el("straightenBtn").addEventListener("click", straightenOpenPolyline);
 
   document.querySelectorAll("#toolSwitch .toolBtn").forEach(btn => {
     btn.addEventListener("click", () => {
